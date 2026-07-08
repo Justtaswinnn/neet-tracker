@@ -322,6 +322,11 @@ async function handleCheck(e) {
     }
     nameEl.classList.add('completed');
   } else {
+    // If chapter WAS mastered and now isn't, deduct the 50 bonus
+    if (nameEl.classList.contains('completed') && !isChecked) {
+      userXp = Math.max(0, userXp - 50);
+      showToast('−50 XP (chapter unmastered)');
+    }
     nameEl.classList.remove('completed');
   }
 
