@@ -284,6 +284,7 @@ async function loadBuddyData() {
     document.getElementById('buddy-progress-section').style.display = 'block';
     document.getElementById('buddy-name-bar').textContent = buddyProfile.display_name;
     updateBuddyProgress();
+    initChat();
   }
 }
 
@@ -705,3 +706,151 @@ async function loadCommunityGraph() {
   });
 }
 
+
+// ===== REAL-TIME CHAT =====
+let chatChannel = null;
+let typingTimeout = null;
+
+async function initChat() {
+  document.getElementById('chat-fab').style.display = 'flex';
+  document.getElementById('btn-open-chat').style.display = 'block';
+  document.getElementById('chat-buddy-name').textContent = buddyProfile.display_name;
+
+  await loadChatHistory();
+  
+  if (!chatChannel) {
+    const ids = [currentUser.id, buddyProfile.id].sort();
+    const channelName = `chat_${ids[0]}_${ids[1]}`;
+    chatChannel = supabase.channel(channelName);
+    
+    chatChannel.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, payload => {
+      const msg = payload.new;
+      if ((msg.sender_id === currentUser.id && msg.receiver_id === buddyProfile.id) ||
+          (msg.sender_id === buddyProfile.id && msg.receiver_id === currentUser.id)) {
+        appendMessage(msg);
+        if (msg.sender_id !== currentUser.id && !document.getElementById('chat-window').classList.contains('show')) {
+          const badge = document.getElementById('chat-unread-badge');
+          badge.style.display = 'block';
+        }
+      }
+    });
+
+    chatChannel.on('broadcast', { event: 'typing' }, payload => {
+      if (payload.payload.user_id === buddyProfile.id) {
+        const ind = document.getElementById('chat-typing-indicator');
+        ind.style.visibility = 'visible';
+        clearTimeout(typingTimeout);
+        typingTimeout = setTimeout(() => { ind.style.visibility = 'hidden'; }, 2000);
+      }
+    });
+
+    chatChannel.subscribe();
+  }
+}
+
+async function loadChatHistory() {
+  const { data } = await supabase
+    .from('messages')
+    .select('*')
+    .or(`and(sender_id.eq.${currentUser.id},receiver_id.eq.${buddyProfile.id}),and(sender_id.eq.${buddyProfile.id},receiver_id.eq.${currentUser.id})`)
+    .order('created_at', { ascending: true })
+    .limit(50);
+  
+  const container = document.getElementById('chat-messages');
+  container.innerHTML = '';
+  if (data) {
+    data.forEach(msg => appendMessage(msg));
+  }
+}
+
+function appendMessage(msg) {
+  const container = document.getElementById('chat-messages');
+  const isSent = msg.sender_id === currentUser.id;
+  const bubble = document.createElement('div');
+  bubble.className = `chat-bubble ${isSent ? 'chat-bubble-sent' : 'chat-bubble-received'}`;
+  
+  let contentHtml = '';
+  if (msg.image_url) {
+    contentHtml += `<img src="${msg.image_url}" class="chat-image" alt="Image"><br>`;
+  }
+  if (msg.content) {
+    const text = document.createElement('div');
+    text.textContent = msg.content;
+    contentHtml += text.innerHTML;
+  }
+  
+  const time = new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  bubble.innerHTML = `${contentHtml}<span class="chat-time">${time}</span>`;
+  
+  container.appendChild(bubble);
+  document.getElementById('chat-body').scrollTop = document.getElementById('chat-body').scrollHeight;
+}
+
+document.getElementById('chat-fab').addEventListener('click', toggleChat);
+document.getElementById('btn-open-chat').addEventListener('click', toggleChat);
+document.getElementById('btn-close-chat').addEventListener('click', () => {
+  document.getElementById('chat-window').classList.remove('show');
+});
+
+function toggleChat() {
+  const win = document.getElementById('chat-window');
+  win.classList.toggle('show');
+  if (win.classList.contains('show')) {
+    document.getElementById('chat-unread-badge').style.display = 'none';
+    document.getElementById('chat-body').scrollTop = document.getElementById('chat-body').scrollHeight;
+    document.getElementById('chat-input').focus();
+  }
+}
+
+document.getElementById('chat-input').addEventListener('input', () => {
+  if (chatChannel) {
+    chatChannel.send({ type: 'broadcast', event: 'typing', payload: { user_id: currentUser.id } });
+  }
+});
+
+async function sendMessage() {
+  const input = document.getElementById('chat-input');
+  const content = input.value.trim();
+  if (content) {
+    input.value = '';
+    await supabase.from('messages').insert({
+      sender_id: currentUser.id,
+      receiver_id: buddyProfile.id,
+      content: content
+    });
+  }
+}
+
+document.getElementById('chat-input').addEventListener('keypress', (e) => {
+  if (e.key === 'Enter') sendMessage();
+});
+
+document.getElementById('btn-send-msg').addEventListener('click', sendMessage);
+
+document.getElementById('btn-attach-image').addEventListener('click', () => {
+  document.getElementById('chat-image-input').click();
+});
+
+document.getElementById('chat-image-input').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  
+  const ext = file.name.split('.').pop();
+  const fileName = `${currentUser.id}_${Date.now()}.${ext}`;
+  
+  const { data, error } = await supabase.storage.from('chat-images').upload(fileName, file);
+  if (error) {
+    showToast('Failed to upload image');
+    return;
+  }
+  
+  const { data: urlData } = supabase.storage.from('chat-images').getPublicUrl(fileName);
+  
+  await supabase.from('messages').insert({
+    sender_id: currentUser.id,
+    receiver_id: buddyProfile.id,
+    image_url: urlData.publicUrl
+  });
+  
+  e.target.value = ''; // reset
+});
