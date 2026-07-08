@@ -7,7 +7,7 @@
     <meta name="description" content="Track your NEET 2027 preparation progress with a study buddy.">
     <link rel="stylesheet" href="/style.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
 </head>
 <body>
@@ -58,15 +58,50 @@
                 </div>
             </nav>
 
+            <!-- COUNTDOWN BANNER -->
+            <div class="countdown-banner">
+                <div class="countdown-left">
+                    <span class="countdown-label">Time left until NEET 2027</span>
+                    <div class="countdown-timer" id="countdown-timer">
+                        <div class="countdown-block">
+                            <span class="cd-value" id="cd-days">---</span>
+                            <span class="cd-unit">days</span>
+                        </div>
+                        <span class="cd-sep">:</span>
+                        <div class="countdown-block">
+                            <span class="cd-value" id="cd-hours">--</span>
+                            <span class="cd-unit">hrs</span>
+                        </div>
+                        <span class="cd-sep">:</span>
+                        <div class="countdown-block">
+                            <span class="cd-value" id="cd-mins">--</span>
+                            <span class="cd-unit">min</span>
+                        </div>
+                        <span class="cd-sep">:</span>
+                        <div class="countdown-block">
+                            <span class="cd-value" id="cd-secs">--</span>
+                            <span class="cd-unit">sec</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="countdown-right">
+                    <span class="countdown-urgency" id="countdown-urgency">Every second counts.</span>
+                </div>
+            </div>
+
             <!-- Stats Row -->
             <div class="stats-row">
                 <div class="stat-card">
-                    <span class="stat-value" id="level-display">1</span>
-                    <span class="stat-label">Level</span>
+                    <span class="stat-value" id="streak-display">0</span>
+                    <span class="stat-label">🔥 Day Streak</span>
                 </div>
                 <div class="stat-card">
                     <span class="stat-value" id="xp-display">0</span>
                     <span class="stat-label">XP</span>
+                </div>
+                <div class="stat-card rank-card">
+                    <span class="stat-value rank-value" id="rank-display">Beginner</span>
+                    <span class="stat-label">Rank</span>
                 </div>
                 <div class="stat-card">
                     <span class="stat-value" id="chapters-display">0/93</span>
@@ -83,6 +118,9 @@
                 <div class="progress-track">
                     <div class="progress-fill" id="main-progress"></div>
                 </div>
+                <div class="progress-nudge" id="progress-nudge">
+                    You haven't started yet. Open a chapter and tick your first box.
+                </div>
             </section>
 
             <!-- Buddy Progress (hidden until paired) -->
@@ -94,6 +132,7 @@
                 <div class="progress-track buddy-track">
                     <div class="progress-fill buddy-fill" id="buddy-progress"></div>
                 </div>
+                <div class="buddy-comparison" id="buddy-comparison"></div>
             </section>
 
             <!-- Buddy System -->
