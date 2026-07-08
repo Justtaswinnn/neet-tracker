@@ -145,6 +145,25 @@ authForm.addEventListener('submit', async (e) => {
 
 document.getElementById('btn-signout').addEventListener('click', () => supabase.auth.signOut());
 
+document.getElementById('btn-edit-name').addEventListener('click', async () => {
+  if (!userProfile) return;
+  const newName = prompt('Enter your new display name:', userProfile.display_name);
+  if (!newName || newName.trim() === '' || newName.trim() === userProfile.display_name) return;
+
+  const originalName = userProfile.display_name;
+  userProfile.display_name = newName.trim();
+  document.getElementById('user-name').textContent = userProfile.display_name;
+  
+  const { error } = await supabase.from('profiles').update({ display_name: userProfile.display_name }).eq('id', currentUser.id);
+  if (error) {
+    userProfile.display_name = originalName;
+    document.getElementById('user-name').textContent = userProfile.display_name;
+    showToast('Failed to update name.');
+  } else {
+    showToast('Name updated successfully!');
+  }
+});
+
 supabase.auth.onAuthStateChange(async (event, session) => {
   if (session?.user) {
     currentUser = session.user;
