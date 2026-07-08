@@ -9,6 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
 
@@ -138,6 +139,17 @@
                     <div class="progress-fill buddy-fill" id="buddy-progress"></div>
                 </div>
                 <div class="buddy-comparison" id="buddy-comparison"></div>
+            </section>
+
+            <!-- Community Leaderboard Graph -->
+            <section class="community-card">
+                <div class="community-header">
+                    <span class="community-label">🌍 Community Leaderboard</span>
+                    <span class="community-sublabel">Total Mastered Chapters</span>
+                </div>
+                <div class="chart-container">
+                    <canvas id="communityChart"></canvas>
+                </div>
             </section>
 
             <!-- Buddy System -->

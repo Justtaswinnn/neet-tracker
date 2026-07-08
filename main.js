@@ -164,6 +164,8 @@ document.getElementById('btn-edit-name').addEventListener('click', async () => {
   }
 });
 
+let communityChart = null;
+
 supabase.auth.onAuthStateChange(async (event, session) => {
   if (session?.user) {
     currentUser = session.user;
@@ -173,6 +175,7 @@ supabase.auth.onAuthStateChange(async (event, session) => {
     buildUI();
     updateDashboard();
     startCountdown();
+    loadCommunityGraph();
   } else {
     currentUser = null;
     authScreen.style.display = 'flex';
@@ -458,6 +461,8 @@ async function saveToSupabase(chapterTaskId, completed) {
   await supabase.from('xp').upsert({
     user_id: currentUser.id, xp: userXp
   }, { onConflict: 'user_id' });
+  
+  loadCommunityGraph();
 }
 
 // ===== UPDATE DASHBOARD =====
@@ -616,3 +621,87 @@ function showToast(msg) {
   requestAnimationFrame(() => toast.classList.add('show'));
   setTimeout(() => { toast.classList.remove('show'); setTimeout(() => toast.remove(), 300); }, 2500);
 }
+
+// ===== COMMUNITY GRAPH =====
+async function loadCommunityGraph() {
+  const { data: allProfiles, error: pErr } = await supabase.from('profiles').select('id, display_name');
+  const { data: allProgress, error: prErr } = await supabase.from('progress').select('user_id, completed').eq('completed', true);
+  
+  if (pErr || prErr || !allProfiles || !allProgress) return;
+
+  const counts = {};
+  allProfiles.forEach(p => { counts[p.id] = { name: p.display_name, score: 0 }; });
+  
+  // Calculate completed chapters based on 3 sub-tasks (T, Q, R)
+  // A chapter is mastered if it has 3 progress entries
+  const taskCounts = {};
+  allProgress.forEach(p => {
+    if (!taskCounts[p.user_id]) taskCounts[p.user_id] = 0;
+    taskCounts[p.user_id]++;
+  });
+
+  for (const [uid, count] of Object.entries(taskCounts)) {
+    if (counts[uid]) {
+      // 3 tasks = 1 chapter
+      counts[uid].score = Math.floor(count / 3);
+    }
+  }
+
+  const sorted = Object.values(counts).sort((a, b) => b.score - a.score).slice(0, 10); // Top 10 users
+  
+  const labels = sorted.map(u => u.name);
+  const data = sorted.map(u => u.score);
+
+  const ctx = document.getElementById('communityChart');
+  
+  if (communityChart) {
+    communityChart.data.labels = labels;
+    communityChart.data.datasets[0].data = data;
+    communityChart.update();
+    return;
+  }
+
+  Chart.defaults.font.family = 'Inter, sans-serif';
+  Chart.defaults.color = '#9ca3af';
+
+  communityChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: 'Mastered Chapters',
+        data: data,
+        backgroundColor: '#10b981',
+        borderRadius: 4,
+        barThickness: 24,
+        borderWidth: 0
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#1f2937',
+          titleFont: { size: 13, weight: '600' },
+          bodyFont: { size: 12 },
+          padding: 10,
+          cornerRadius: 6,
+          displayColors: false
+        }
+      },
+      scales: {
+        y: {
+          beginAtZero: true,
+          grid: { color: 'rgba(255, 255, 255, 0.05)', drawBorder: false },
+          ticks: { stepSize: 5 }
+        },
+        x: {
+          grid: { display: false, drawBorder: false }
+        }
+      }
+    }
+  });
+}
+
