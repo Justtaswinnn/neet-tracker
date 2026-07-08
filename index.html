@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NEET 2027 Tracker</title>
+    <meta name="description" content="Track your NEET 2027 preparation progress with a study buddy.">
+    <link rel="stylesheet" href="/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+</head>
+<body>
+
+    <!-- AUTH SCREEN -->
+    <div id="auth-screen" class="screen">
+        <div class="auth-container">
+            <div class="auth-logo">N</div>
+            <h1 class="auth-title">NEET 2027</h1>
+            <p class="auth-subtitle">Track progress. Stay accountable.</p>
+
+            <form id="auth-form" autocomplete="off">
+                <div id="name-field" class="form-group" style="display:none;">
+                    <label for="auth-name">Display Name</label>
+                    <input type="text" id="auth-name" placeholder="What should we call you?">
+                </div>
+                <div class="form-group">
+                    <label for="auth-email">Email</label>
+                    <input type="email" id="auth-email" placeholder="you@example.com" required>
+                </div>
+                <div class="form-group">
+                    <label for="auth-password">Password</label>
+                    <input type="password" id="auth-password" placeholder="••••••••" required minlength="6">
+                </div>
+                <button type="submit" class="btn-primary" id="auth-submit">Sign In</button>
+                <p class="auth-toggle">
+                    <span id="auth-toggle-text">Don't have an account?</span>
+                    <a href="#" id="auth-toggle-link">Sign Up</a>
+                </p>
+                <p class="auth-error" id="auth-error"></p>
+            </form>
+        </div>
+    </div>
+
+    <!-- MAIN APP SCREEN -->
+    <div id="app-screen" class="screen" style="display:none;">
+        <div class="container">
+
+            <!-- Top Bar -->
+            <nav class="topbar">
+                <div class="topbar-left">
+                    <span class="topbar-logo">N</span>
+                    <span class="topbar-title">NEET 2027</span>
+                </div>
+                <div class="topbar-right">
+                    <span class="topbar-user" id="user-name"></span>
+                    <button class="btn-ghost" id="btn-signout">Sign Out</button>
+                </div>
+            </nav>
+
+            <!-- Stats Row -->
+            <div class="stats-row">
+                <div class="stat-card">
+                    <span class="stat-value" id="level-display">1</span>
+                    <span class="stat-label">Level</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-value" id="xp-display">0</span>
+                    <span class="stat-label">XP</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-value" id="chapters-display">0/79</span>
+                    <span class="stat-label">Mastered</span>
+                </div>
+            </div>
+
+            <!-- Overall Progress -->
+            <section class="progress-section">
+                <div class="progress-row">
+                    <span class="progress-label">Your Progress</span>
+                    <span class="progress-pct" id="progress-percent">0%</span>
+                </div>
+                <div class="progress-track">
+                    <div class="progress-fill" id="main-progress"></div>
+                </div>
+            </section>
+
+            <!-- Buddy Progress (hidden until paired) -->
+            <section class="progress-section buddy-section" id="buddy-progress-section" style="display:none;">
+                <div class="progress-row">
+                    <span class="progress-label">🤝 <span id="buddy-name-bar">Buddy</span>'s Progress</span>
+                    <span class="progress-pct" id="buddy-progress-percent">0%</span>
+                </div>
+                <div class="progress-track buddy-track">
+                    <div class="progress-fill buddy-fill" id="buddy-progress"></div>
+                </div>
+            </section>
+
+            <!-- Buddy System -->
+            <section class="buddy-card">
+                <div class="buddy-left">
+                    <span class="buddy-label">Your Buddy Code</span>
+                    <div class="buddy-code-display">
+                        <span id="my-buddy-code">------</span>
+                        <button class="btn-copy" id="btn-copy-code" title="Copy code">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="buddy-divider"></div>
+                <div class="buddy-right">
+                    <span class="buddy-label">Pair with a Buddy</span>
+                    <div class="buddy-input-row">
+                        <input type="text" id="buddy-code-input" placeholder="Enter code" maxlength="6">
+                        <button class="btn-pair" id="btn-pair">Link</button>
+                    </div>
+                    <span class="buddy-status" id="buddy-status"></span>
+                </div>
+            </section>
+
+            <!-- Subject Sections -->
+            <div class="subjects-container" id="subjects-container"></div>
+
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <script type="module" src="/main.js"></script>
+</body>
+</html>
