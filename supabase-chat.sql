@@ -34,12 +34,13 @@ create policy "Users can read messages with their buddy"
 
 -- 3. Enable Realtime for messages
 -- (This allows the frontend to instantly receive new messages)
-begin;
+DO $$
+BEGIN
   -- Remove the table from publication if it's already there to avoid duplicates
   alter publication supabase_realtime drop table public.messages;
-exception when others then
+EXCEPTION WHEN others THEN
   -- Ignore error if it wasn't there
-end;
+END $$;
 
 alter publication supabase_realtime add table public.messages;
 
