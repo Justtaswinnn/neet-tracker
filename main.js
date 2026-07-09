@@ -233,7 +233,7 @@ async function loadUserData() {
 
   if (userProfile) {
     document.getElementById('user-name').textContent = userProfile.display_name;
-    document.getElementById('my-buddy-code').textContent = userProfile.buddy_code.toUpperCase();
+    document.getElementById('my-buddy-code').textContent = userProfile.buddy_code ? userProfile.buddy_code.toUpperCase() : '------';
   }
 
   const { data: progressRows } = await supabase
