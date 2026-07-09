@@ -583,8 +583,7 @@ function updateDashboard() {
 
   document.getElementById('chapters-display').textContent = `${totalMastered}/${TOTAL_CHAPTERS}`;
 
-  // Update buddy comparison if paired
-  if (buddyProfile) updateBuddyProgress();
+  // Update buddy comparison if paired (removed since migrated to multi-friend system)
 }
 
 // ===== BUDDY SYSTEM (FIXED — uses RPC) =====
