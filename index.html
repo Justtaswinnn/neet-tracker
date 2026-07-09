@@ -129,26 +129,14 @@
                 </div>
             </section>
 
-            <!-- Buddy Progress (hidden until paired) -->
-            <section class="progress-section buddy-section" id="buddy-progress-section" style="display:none;">
-                <div class="progress-row">
-                    <span class="progress-label">🤝 <span id="buddy-name-bar">Buddy</span>'s Progress</span>
-                    <span class="progress-pct" id="buddy-progress-percent">0%</span>
-                </div>
-                <div class="progress-track buddy-track">
-                    <div class="progress-fill buddy-fill" id="buddy-progress"></div>
-                </div>
-                <div class="buddy-comparison" id="buddy-comparison"></div>
-            </section>
-
-            <!-- Community Leaderboard Graph -->
-            <section class="community-card">
+            <!-- Friends Line Graph -->
+            <section class="community-card" id="friends-graph-section" style="display:none;">
                 <div class="community-header">
-                    <span class="community-label">🌍 Community Leaderboard</span>
-                    <span class="community-sublabel">Total Mastered Chapters</span>
+                    <span class="community-label">📈 Progress Timeline</span>
+                    <span class="community-sublabel">You and your Buddies</span>
                 </div>
                 <div class="chart-container">
-                    <canvas id="communityChart"></canvas>
+                    <canvas id="friendsChart"></canvas>
                 </div>
             </section>
 
@@ -168,12 +156,18 @@
                 </div>
                 <div class="buddy-divider"></div>
                 <div class="buddy-right">
-                    <span class="buddy-label">Pair with a Buddy</span>
+                    <span class="buddy-label">Add a Buddy</span>
                     <div class="buddy-input-row">
                         <input type="text" id="buddy-code-input" placeholder="Enter code" maxlength="6">
-                        <button class="btn-pair" id="btn-pair">Link</button>
+                        <button class="btn-pair" id="btn-pair">Add</button>
                     </div>
                     <span class="buddy-status" id="buddy-status"></span>
+                </div>
+                <!-- Incoming Requests -->
+                <div id="incoming-requests-container" style="display:none; margin-top: 1rem; border-top: 1px solid var(--border); padding-top: 1rem;">
+                    <span class="buddy-label">Incoming Requests</span>
+                    <ul id="requests-list" style="list-style:none; padding:0; margin:0; margin-top:8px; display:flex; flex-direction:column; gap:8px;">
+                    </ul>
                 </div>
             </section>
 
@@ -192,8 +186,9 @@
     <!-- Chat Window -->
     <div id="chat-window" class="chat-window">
         <div class="chat-header">
-            <div class="chat-header-info">
-                <span class="chat-buddy-name" id="chat-buddy-name">Buddy</span>
+            <div class="chat-header-info" style="display:flex; flex-direction:column; gap:4px; width:100%;">
+                <select id="chat-friend-selector" style="background:transparent; color:white; border:1px solid rgba(255,255,255,0.2); border-radius:4px; padding:4px 8px; font-family:inherit; outline:none; max-width:150px; cursor:pointer;">
+                </select>
                 <span class="chat-typing-indicator" id="chat-typing-indicator">typing...</span>
             </div>
             <button class="btn-icon" id="btn-close-chat" style="color:white; background:none; border:none; cursor:pointer;">

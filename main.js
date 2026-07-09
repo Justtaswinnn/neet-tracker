@@ -78,8 +78,10 @@ let currentUser = null;
 let userProfile = null;
 let userXp = 0;
 let userStreak = { current_streak: 0, longest_streak: 0, last_study_date: null };
-let buddyProfile = null;
-let buddyProgressMap = {};
+let myFriends = [];
+let pendingRequests = [];
+let activeChatFriendId = null;
+let friendsProgressMap = {};
 let progressMap = {};
 
 // ===== AUTH =====
@@ -175,7 +177,7 @@ supabase.auth.onAuthStateChange(async (event, session) => {
     buildUI();
     updateDashboard();
     startCountdown();
-    loadCommunityGraph();
+    loadFriendsGraph();
   } else {
     currentUser = null;
     authScreen.style.display = 'flex';
@@ -260,57 +262,97 @@ async function loadUserData() {
     }
   }
 
-  await loadBuddyData();
+  await loadFriendsData();
 }
 
-async function loadBuddyData() {
-  if (!userProfile?.buddy_id) {
-    buddyProfile = null;
-    buddyProgressMap = {};
-    document.getElementById('buddy-progress-section').style.display = 'none';
-    return;
+
+async function loadFriendsData() {
+  const { data: friendships } = await supabase
+    .from("friendships")
+    .select("*")
+    .or(`user1_id.eq.${currentUser.id},user2_id.eq.${currentUser.id}`);
+
+  pendingRequests = [];
+  const acceptedFriendIds = [];
+
+  if (friendships) {
+    friendships.forEach(f => {
+      if (f.status === "pending" && f.user2_id === currentUser.id) {
+        pendingRequests.push(f.user1_id);
+      } else if (f.status === "accepted") {
+        acceptedFriendIds.push(f.user1_id === currentUser.id ? f.user2_id : f.user1_id);
+      }
+    });
   }
 
-  const { data: bProfile } = await supabase
-    .from('profiles').select('*').eq('id', userProfile.buddy_id).single();
-  buddyProfile = bProfile;
-
-  if (buddyProfile) {
-    const { data: bProgress } = await supabase
-      .from('progress').select('chapter_id, completed').eq('user_id', buddyProfile.id);
-    buddyProgressMap = {};
-    if (bProgress) bProgress.forEach(r => { if (r.completed) buddyProgressMap[r.chapter_id] = true; });
-
-    document.getElementById('buddy-progress-section').style.display = 'block';
-    document.getElementById('buddy-name-bar').textContent = buddyProfile.display_name;
-    updateBuddyProgress();
-    initChat();
+  const allIdsToFetch = [...new Set([...pendingRequests, ...acceptedFriendIds])];
+  let profilesMap = {};
+  if (allIdsToFetch.length > 0) {
+    const { data: profiles } = await supabase
+      .from("profiles")
+      .select("*")
+      .in("id", allIdsToFetch);
+    if (profiles) {
+      profiles.forEach(p => { profilesMap[p.id] = p; });
+    }
   }
-}
 
-function updateBuddyProgress() {
-  const completed = Object.keys(buddyProgressMap).length;
-  const pct = ((completed / TOTAL_TASKS) * 100).toFixed(1);
-  document.getElementById('buddy-progress-percent').textContent = `${pct}%`;
-  document.getElementById('buddy-progress').style.width = `${pct}%`;
+  myFriends = acceptedFriendIds.map(id => profilesMap[id]).filter(Boolean);
+  const myPending = pendingRequests.map(id => profilesMap[id]).filter(Boolean);
 
-  // Comparison nudge
-  const myCompleted = Object.keys(progressMap).length;
-  const compEl = document.getElementById('buddy-comparison');
-  const diff = myCompleted - completed;
-
-  if (diff < 0) {
-    compEl.className = 'buddy-comparison behind';
-    compEl.textContent = `${buddyProfile.display_name} is ${Math.abs(diff)} tasks ahead of you. Step it up!`;
-  } else if (diff > 0) {
-    compEl.className = 'buddy-comparison ahead';
-    compEl.textContent = `You're ${diff} tasks ahead. Keep the lead!`;
+  const reqContainer = document.getElementById("incoming-requests-container");
+  const reqList = document.getElementById("requests-list");
+  reqList.innerHTML = "";
+  if (myPending.length > 0) {
+    reqContainer.style.display = "block";
+    myPending.forEach(p => {
+      const li = document.createElement("li");
+      li.style.display = "flex";
+      li.style.justifyContent = "space-between";
+      li.style.alignItems = "center";
+      li.innerHTML = `<span>${p.display_name}</span> <button class="btn-pair" onclick="acceptRequest('${p.id}')" style="padding:4px 8px; font-size:12px;">Accept</button>`;
+      reqList.appendChild(li);
+    });
   } else {
-    compEl.className = 'buddy-comparison';
-    compEl.textContent = "You're neck and neck. Who will pull ahead?";
-    compEl.style.color = '#6b7280';
+    reqContainer.style.display = "none";
+  }
+
+  friendsProgressMap = {};
+  if (myFriends.length > 0) {
+    const { data: fProg } = await supabase
+      .from("progress")
+      .select("*")
+      .in("user_id", acceptedFriendIds)
+      .eq("completed", true);
+    
+    if (fProg) {
+      fProg.forEach(r => {
+        if (!friendsProgressMap[r.user_id]) friendsProgressMap[r.user_id] = {};
+        friendsProgressMap[r.user_id][r.chapter_id] = r;
+      });
+    }
+
+    document.getElementById("friends-graph-section").style.display = "block";
+    updateFriendsGraphData();
+    initChat();
+  } else {
+    document.getElementById("friends-graph-section").style.display = "none";
+    document.getElementById("btn-open-chat").style.display = "none";
+    document.getElementById("chat-fab").style.display = "none";
   }
 }
+
+window.acceptRequest = async function(requesterId) {
+  const { data, error } = await supabase.rpc("accept_buddy_request", { requester_id: requesterId });
+  if (error) {
+    showToast("Failed to accept.");
+  } else {
+    showToast("Request accepted!");
+    await loadFriendsData();
+    loadFriendsGraph();
+  }
+};
+
 
 // ===== BUILD UI =====
 function buildUI() {
@@ -463,7 +505,7 @@ async function saveToSupabase(chapterTaskId, completed) {
     user_id: currentUser.id, xp: userXp
   }, { onConflict: 'user_id' });
   
-  loadCommunityGraph();
+  loadFriendsGraph();
 }
 
 // ===== UPDATE DASHBOARD =====
@@ -551,43 +593,37 @@ document.getElementById('btn-copy-code').addEventListener('click', () => {
   showToast('Code copied!');
 });
 
-document.getElementById('btn-pair').addEventListener('click', async () => {
-  const statusEl = document.getElementById('buddy-status');
-  const code = document.getElementById('buddy-code-input').value.trim().toLowerCase();
+
+document.getElementById("btn-pair").addEventListener("click", async () => {
+  const statusEl = document.getElementById("buddy-status");
+  const code = document.getElementById("buddy-code-input").value.trim().toLowerCase();
 
   if (!code || code.length < 6) {
-    statusEl.textContent = 'Enter a valid 6-character code.';
-    statusEl.style.color = '#ef4444';
+    statusEl.textContent = "Enter a valid 6-character code.";
+    statusEl.style.color = "#ef4444";
     return;
   }
 
-  // Use the server-side RPC function (bypasses RLS)
-  const { data, error } = await supabase.rpc('pair_buddy', { buddy_code_input: code });
+  const { data, error } = await supabase.rpc("send_buddy_request", { target_code: code });
 
   if (error) {
-    statusEl.textContent = 'Something went wrong. Try again.';
-    statusEl.style.color = '#ef4444';
+    statusEl.textContent = "Something went wrong. Try again.";
+    statusEl.style.color = "#ef4444";
     return;
   }
 
   if (data && !data.success) {
     statusEl.textContent = data.error;
-    statusEl.style.color = '#ef4444';
+    statusEl.style.color = "#ef4444";
     return;
   }
 
-  userProfile.buddy_id = true; // Will be refreshed
-  statusEl.textContent = `Paired with ${data.buddy_name}!`;
-  statusEl.style.color = '#10b981';
-  showToast(`🤝 Paired with ${data.buddy_name}!`);
-
-  // Reload profile and buddy data
-  const { data: refreshedProfile } = await supabase
-    .from('profiles').select('*').eq('id', currentUser.id).single();
-  userProfile = refreshedProfile;
-  await loadBuddyData();
-  updateDashboard();
+  statusEl.textContent = "Request sent!";
+  statusEl.style.color = "#10b981";
+  showToast("Friend request sent!");
+  document.getElementById("buddy-code-input").value = "";
 });
+
 
 // ===== CONFETTI =====
 function triggerConfetti(el) {
@@ -623,88 +659,99 @@ function showToast(msg) {
   setTimeout(() => { toast.classList.remove('show'); setTimeout(() => toast.remove(), 300); }, 2500);
 }
 
-// ===== COMMUNITY GRAPH =====
-async function loadCommunityGraph() {
-  const { data: allProfiles, error: pErr } = await supabase.from('profiles').select('id, display_name');
-  const { data: allProgress, error: prErr } = await supabase.from('progress').select('user_id, completed').eq('completed', true);
-  
-  if (pErr || prErr || !allProfiles || !allProgress) return;
+// ===== FRIENDS GRAPH =====
 
-  const counts = {};
-  allProfiles.forEach(p => { counts[p.id] = { name: p.display_name, score: 0 }; });
+let friendsChart = null;
+let rawProgressData = [];
+
+async function loadFriendsGraph() {
+  if (myFriends.length === 0) return;
+  const friendIds = myFriends.map(f => f.id);
+  const { data: allProgress } = await supabase
+    .from("progress")
+    .select("user_id, completed, updated_at")
+    .in("user_id", [currentUser.id, ...friendIds])
+    .eq("completed", true);
   
-  // Calculate completed chapters based on 3 sub-tasks (T, Q, R)
-  // A chapter is mastered if it has 3 progress entries
-  const taskCounts = {};
-  allProgress.forEach(p => {
-    if (!taskCounts[p.user_id]) taskCounts[p.user_id] = 0;
-    taskCounts[p.user_id]++;
+  if (allProgress) {
+    rawProgressData = allProgress;
+    updateFriendsGraphData();
+  }
+}
+
+function updateFriendsGraphData() {
+  if (!rawProgressData || rawProgressData.length === 0) return;
+
+  const users = { [currentUser.id]: userProfile.display_name };
+  myFriends.forEach(f => users[f.id] = f.display_name);
+  
+  const timelineMap = {};
+  
+  rawProgressData.forEach(p => {
+    const date = new Date(p.updated_at).toISOString().split("T")[0];
+    if (!timelineMap[date]) timelineMap[date] = {};
+    if (!timelineMap[date][p.user_id]) timelineMap[date][p.user_id] = 0;
+    timelineMap[date][p.user_id] += (1/3); // 3 tasks = 1 chapter
   });
 
-  for (const [uid, count] of Object.entries(taskCounts)) {
-    if (counts[uid]) {
-      // 3 tasks = 1 chapter
-      counts[uid].score = Math.floor(count / 3);
-    }
-  }
-
-  const sorted = Object.values(counts).sort((a, b) => b.score - a.score).slice(0, 10); // Top 10 users
+  const sortedDates = Object.keys(timelineMap).sort();
+  const labels = sortedDates;
   
-  const labels = sorted.map(u => u.name);
-  const data = sorted.map(u => u.score);
+  const datasets = Object.keys(users).map((uid, index) => {
+    const colors = ["#10b981", "#3b82f6", "#8b5cf6", "#f59e0b", "#ec4899"];
+    const color = colors[index % colors.length];
+    
+    let cumulative = 0;
+    const data = sortedDates.map(date => {
+      if (timelineMap[date] && timelineMap[date][uid]) {
+        cumulative += timelineMap[date][uid];
+      }
+      return cumulative;
+    });
 
-  const ctx = document.getElementById('communityChart');
+    return {
+      label: users[uid],
+      data: data,
+      borderColor: color,
+      backgroundColor: color + "20",
+      fill: true,
+      tension: 0.4
+    };
+  });
+
+  const ctx = document.getElementById("friendsChart");
   
-  if (communityChart) {
-    communityChart.data.labels = labels;
-    communityChart.data.datasets[0].data = data;
-    communityChart.update();
+  if (friendsChart) {
+    friendsChart.data.labels = labels;
+    friendsChart.data.datasets = datasets;
+    friendsChart.update();
     return;
   }
 
-  Chart.defaults.font.family = 'Inter, sans-serif';
-  Chart.defaults.color = '#9ca3af';
+  Chart.defaults.font.family = "Inter, sans-serif";
+  Chart.defaults.color = "#9ca3af";
 
-  communityChart = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels: labels,
-      datasets: [{
-        label: 'Mastered Chapters',
-        data: data,
-        backgroundColor: '#10b981',
-        borderRadius: 4,
-        barThickness: 24,
-        borderWidth: 0
-      }]
-    },
+  friendsChart = new Chart(ctx, {
+    type: "line",
+    data: { labels, datasets },
     options: {
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
-        legend: { display: false },
+        legend: { display: true, position: 'bottom', labels: { color: "#9ca3af" } },
         tooltip: {
-          backgroundColor: '#1f2937',
-          titleFont: { size: 13, weight: '600' },
-          bodyFont: { size: 12 },
-          padding: 10,
-          cornerRadius: 6,
-          displayColors: false
+          mode: 'index', intersect: false,
+          backgroundColor: "#1f2937", titleFont: { size: 13, weight: "600" }, padding: 10
         }
       },
       scales: {
-        y: {
-          beginAtZero: true,
-          grid: { color: 'rgba(255, 255, 255, 0.05)', drawBorder: false },
-          ticks: { stepSize: 5 }
-        },
-        x: {
-          grid: { display: false, drawBorder: false }
-        }
+        y: { beginAtZero: true, grid: { color: "rgba(255, 255, 255, 0.05)" } },
+        x: { grid: { display: false } }
       }
     }
   });
 }
+
 
 
 // ===== REAL-TIME CHAT =====
@@ -712,35 +759,61 @@ let chatChannel = null;
 let typingTimeout = null;
 
 async function initChat() {
-  document.getElementById('chat-fab').style.display = 'flex';
-  document.getElementById('btn-open-chat').style.display = 'block';
-  document.getElementById('chat-buddy-name').textContent = buddyProfile.display_name;
+  if (myFriends.length === 0) return;
+  
+  document.getElementById("chat-fab").style.display = "flex";
+  document.getElementById("btn-open-chat").style.display = "block";
+
+  const selector = document.getElementById("chat-friend-selector");
+  selector.innerHTML = "";
+  myFriends.forEach(f => {
+    const opt = document.createElement("option");
+    opt.value = f.id;
+    opt.textContent = f.display_name;
+    selector.appendChild(opt);
+  });
+
+  if (!activeChatFriendId && myFriends.length > 0) {
+    activeChatFriendId = myFriends[0].id;
+  }
+  
+  if (activeChatFriendId) {
+    selector.value = activeChatFriendId;
+  }
+
+  selector.addEventListener("change", (e) => {
+    activeChatFriendId = e.target.value;
+    loadChatHistory();
+  });
 
   await loadChatHistory();
   
   if (!chatChannel) {
-    const ids = [currentUser.id, buddyProfile.id].sort();
-    const channelName = `chat_${ids[0]}_${ids[1]}`;
-    chatChannel = supabase.channel(channelName);
+    chatChannel = supabase.channel('global_chat');
     
-    chatChannel.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, payload => {
+    chatChannel.on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" }, payload => {
       const msg = payload.new;
-      if ((msg.sender_id === currentUser.id && msg.receiver_id === buddyProfile.id) ||
-          (msg.sender_id === buddyProfile.id && msg.receiver_id === currentUser.id)) {
-        appendMessage(msg);
-        if (msg.sender_id !== currentUser.id && !document.getElementById('chat-window').classList.contains('show')) {
-          const badge = document.getElementById('chat-unread-badge');
-          badge.style.display = 'block';
+      if (msg.receiver_id === currentUser.id || msg.sender_id === currentUser.id) {
+        
+        // Only append if it belongs to current active chat
+        if ((msg.sender_id === currentUser.id && msg.receiver_id === activeChatFriendId) ||
+            (msg.sender_id === activeChatFriendId && msg.receiver_id === currentUser.id)) {
+          appendMessage(msg);
+        }
+
+        if (msg.sender_id !== currentUser.id && !document.getElementById("chat-window").classList.contains("show")) {
+          const badge = document.getElementById("chat-unread-badge");
+          badge.style.display = "block";
         }
       }
     });
 
-    chatChannel.on('broadcast', { event: 'typing' }, payload => {
-      if (payload.payload.user_id === buddyProfile.id) {
-        const ind = document.getElementById('chat-typing-indicator');
-        ind.style.visibility = 'visible';
+    chatChannel.on("broadcast", { event: "typing" }, payload => {
+      if (payload.payload.user_id === activeChatFriendId) {
+        const ind = document.getElementById("chat-typing-indicator");
+        ind.style.visibility = "visible";
         clearTimeout(typingTimeout);
-        typingTimeout = setTimeout(() => { ind.style.visibility = 'hidden'; }, 2000);
+        typingTimeout = setTimeout(() => { ind.style.visibility = "hidden"; }, 2000);
       }
     });
 
@@ -749,108 +822,110 @@ async function initChat() {
 }
 
 async function loadChatHistory() {
+  if (!activeChatFriendId) return;
+
   const { data } = await supabase
-    .from('messages')
-    .select('*')
-    .or(`and(sender_id.eq.${currentUser.id},receiver_id.eq.${buddyProfile.id}),and(sender_id.eq.${buddyProfile.id},receiver_id.eq.${currentUser.id})`)
-    .order('created_at', { ascending: true })
+    .from("messages")
+    .select("*")
+    .or(`and(sender_id.eq.${currentUser.id},receiver_id.eq.${activeChatFriendId}),and(sender_id.eq.${activeChatFriendId},receiver_id.eq.${currentUser.id})`)
+    .order("created_at", { ascending: true })
     .limit(50);
   
-  const container = document.getElementById('chat-messages');
-  container.innerHTML = '';
+  const container = document.getElementById("chat-messages");
+  container.innerHTML = "";
   if (data) {
     data.forEach(msg => appendMessage(msg));
   }
 }
 
 function appendMessage(msg) {
-  const container = document.getElementById('chat-messages');
+  const container = document.getElementById("chat-messages");
   const isSent = msg.sender_id === currentUser.id;
-  const bubble = document.createElement('div');
-  bubble.className = `chat-bubble ${isSent ? 'chat-bubble-sent' : 'chat-bubble-received'}`;
+  const bubble = document.createElement("div");
+  bubble.className = `chat-bubble ${isSent ? "chat-bubble-sent" : "chat-bubble-received"}`;
   
-  let contentHtml = '';
+  let contentHtml = "";
   if (msg.image_url) {
     contentHtml += `<img src="${msg.image_url}" class="chat-image" alt="Image"><br>`;
   }
   if (msg.content) {
-    const text = document.createElement('div');
+    const text = document.createElement("div");
     text.textContent = msg.content;
     contentHtml += text.innerHTML;
   }
   
-  const time = new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const time = new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   bubble.innerHTML = `${contentHtml}<span class="chat-time">${time}</span>`;
   
   container.appendChild(bubble);
-  document.getElementById('chat-body').scrollTop = document.getElementById('chat-body').scrollHeight;
+  document.getElementById("chat-body").scrollTop = document.getElementById("chat-body").scrollHeight;
 }
 
-document.getElementById('chat-fab').addEventListener('click', toggleChat);
-document.getElementById('btn-open-chat').addEventListener('click', toggleChat);
-document.getElementById('btn-close-chat').addEventListener('click', () => {
-  document.getElementById('chat-window').classList.remove('show');
+document.getElementById("chat-fab").addEventListener("click", toggleChat);
+document.getElementById("btn-open-chat").addEventListener("click", toggleChat);
+document.getElementById("btn-close-chat").addEventListener("click", () => {
+  document.getElementById("chat-window").classList.remove("show");
 });
 
 function toggleChat() {
-  const win = document.getElementById('chat-window');
-  win.classList.toggle('show');
-  if (win.classList.contains('show')) {
-    document.getElementById('chat-unread-badge').style.display = 'none';
-    document.getElementById('chat-body').scrollTop = document.getElementById('chat-body').scrollHeight;
-    document.getElementById('chat-input').focus();
+  const win = document.getElementById("chat-window");
+  win.classList.toggle("show");
+  if (win.classList.contains("show")) {
+    document.getElementById("chat-unread-badge").style.display = "none";
+    document.getElementById("chat-body").scrollTop = document.getElementById("chat-body").scrollHeight;
+    document.getElementById("chat-input").focus();
   }
 }
 
-document.getElementById('chat-input').addEventListener('input', () => {
-  if (chatChannel) {
-    chatChannel.send({ type: 'broadcast', event: 'typing', payload: { user_id: currentUser.id } });
+document.getElementById("chat-input").addEventListener("input", () => {
+  if (chatChannel && activeChatFriendId) {
+    chatChannel.send({ type: "broadcast", event: "typing", payload: { user_id: currentUser.id } });
   }
 });
 
 async function sendMessage() {
-  const input = document.getElementById('chat-input');
+  const input = document.getElementById("chat-input");
   const content = input.value.trim();
-  if (content) {
-    input.value = '';
-    await supabase.from('messages').insert({
+  if (content && activeChatFriendId) {
+    input.value = "";
+    await supabase.from("messages").insert({
       sender_id: currentUser.id,
-      receiver_id: buddyProfile.id,
+      receiver_id: activeChatFriendId,
       content: content
     });
   }
 }
 
-document.getElementById('chat-input').addEventListener('keypress', (e) => {
-  if (e.key === 'Enter') sendMessage();
+document.getElementById("chat-input").addEventListener("keypress", (e) => {
+  if (e.key === "Enter") sendMessage();
 });
 
-document.getElementById('btn-send-msg').addEventListener('click', sendMessage);
+document.getElementById("btn-send-msg").addEventListener("click", sendMessage);
 
-document.getElementById('btn-attach-image').addEventListener('click', () => {
-  document.getElementById('chat-image-input').click();
+document.getElementById("btn-attach-image").addEventListener("click", () => {
+  document.getElementById("chat-image-input").click();
 });
 
-document.getElementById('chat-image-input').addEventListener('change', async (e) => {
+document.getElementById("chat-image-input").addEventListener("change", async (e) => {
   const file = e.target.files[0];
-  if (!file) return;
+  if (!file || !activeChatFriendId) return;
   
-  const ext = file.name.split('.').pop();
+  const ext = file.name.split(".").pop();
   const fileName = `${currentUser.id}_${Date.now()}.${ext}`;
   
-  const { data, error } = await supabase.storage.from('chat-images').upload(fileName, file);
+  const { data, error } = await supabase.storage.from("chat-images").upload(fileName, file);
   if (error) {
-    showToast('Failed to upload image');
+    showToast("Failed to upload image");
     return;
   }
   
-  const { data: urlData } = supabase.storage.from('chat-images').getPublicUrl(fileName);
+  const { data: urlData } = supabase.storage.from("chat-images").getPublicUrl(fileName);
   
-  await supabase.from('messages').insert({
+  await supabase.from("messages").insert({
     sender_id: currentUser.id,
-    receiver_id: buddyProfile.id,
+    receiver_id: activeChatFriendId,
     image_url: urlData.publicUrl
   });
   
-  e.target.value = ''; // reset
+  e.target.value = ""; // reset
 });

@@ -1,77 +1,131 @@
--- ================================================
--- FINAL FIX FOR SUPABASE
--- Run this in your Supabase SQL Editor
--- ================================================
+-- 1. DROP OLD BUDDY SYSTEM
+DROP FUNCTION IF EXISTS public.pair_buddy(text);
+DROP POLICY IF EXISTS "Users can read messages with their buddy" ON public.messages;
+ALTER TABLE public.profiles DROP COLUMN IF EXISTS buddy_id;
 
--- 1. Drop the policies causing infinite recursion
-drop policy if exists "Users can read buddy profile" on public.profiles;
-drop policy if exists "Anyone can lookup by buddy code" on public.profiles;
-drop policy if exists "Users can read own profile" on public.profiles;
-
--- Create a single, non-recursive policy for selecting profiles
--- (This allows users to read profiles, avoiding the recursion crash)
-create policy "Anyone can read profiles" 
-  on public.profiles for select 
-  using (true);
-
--- 2. Create the server-side pairing function (bypasses RLS)
-create or replace function public.pair_buddy(buddy_code_input text)
-returns json as $$
-declare
-  buddy_record record;
-begin
-  select id, display_name, buddy_code into buddy_record
-  from public.profiles
-  where buddy_code = lower(buddy_code_input);
-
-  if not found then
-    return json_build_object('success', false, 'error', 'No user found with that code');
-  end if;
-
-  if buddy_record.id = auth.uid() then
-    return json_build_object('success', false, 'error', 'That is your own code');
-  end if;
-
-  -- Link both users to each other
-  update public.profiles set buddy_id = buddy_record.id where id = auth.uid();
-  update public.profiles set buddy_id = auth.uid() where id = buddy_record.id;
-
-  return json_build_object('success', true, 'buddy_name', buddy_record.display_name);
-end;
-$$ language plpgsql security definer;
-
--- 3. Streaks table (if not already created)
-create table if not exists public.streaks (
-  user_id uuid references public.profiles(id) on delete cascade primary key,
-  current_streak integer default 0,
-  longest_streak integer default 0,
-  last_study_date date
+-- 2. CREATE FRIENDSHIPS TABLE
+CREATE TABLE IF NOT EXISTS public.friendships (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  user1_id uuid REFERENCES public.profiles(id) ON DELETE CASCADE,
+  user2_id uuid REFERENCES public.profiles(id) ON DELETE CASCADE,
+  status text CHECK (status IN ('pending', 'accepted')),
+  created_at timestamptz DEFAULT now(),
+  UNIQUE(user1_id, user2_id)
 );
 
-alter table public.streaks enable row level security;
+ALTER TABLE public.friendships ENABLE ROW LEVEL SECURITY;
 
--- Drop streak policies if they exist so we can recreate cleanly
-drop policy if exists "Users can read own streak" on public.streaks;
-drop policy if exists "Users can insert own streak" on public.streaks;
-drop policy if exists "Users can update own streak" on public.streaks;
-drop policy if exists "Users can read buddy streak" on public.streaks;
-drop policy if exists "Anyone can read streaks" on public.streaks;
+-- 3. RLS FOR FRIENDSHIPS
+-- Users can see friendships they are part of
+CREATE POLICY "Users can read own friendships"
+  ON public.friendships FOR SELECT
+  USING (auth.uid() = user1_id OR auth.uid() = user2_id);
 
--- Simple streaks read policy (avoids recursion)
-create policy "Anyone can read streaks"
-  on public.streaks for select using (true);
+-- 4. UPDATE RLS FOR OTHER TABLES TO SUPPORT MULTIPLE BUDDIES
+-- Drop old buddy policies
+DROP POLICY IF EXISTS "Users can read buddy profile" ON public.profiles;
+DROP POLICY IF EXISTS "Anyone can lookup by buddy code" ON public.profiles;
+DROP POLICY IF EXISTS "Users can read buddy progress" ON public.progress;
+DROP POLICY IF EXISTS "Users can read buddy xp" ON public.xp;
 
-create policy "Users can insert own streak"
-  on public.streaks for insert with check (auth.uid() = user_id);
+-- New Profile Policies
+-- Users can read profiles of people they have an accepted friendship with, OR pending requests
+CREATE POLICY "Users can read friend profiles"
+  ON public.profiles FOR SELECT
+  USING (
+    id IN (
+      SELECT user1_id FROM public.friendships WHERE user2_id = auth.uid()
+      UNION
+      SELECT user2_id FROM public.friendships WHERE user1_id = auth.uid()
+    )
+  );
 
-create policy "Users can update own streak"
-  on public.streaks for update using (auth.uid() = user_id);
+-- New Progress Policy
+CREATE POLICY "Users can read friend progress"
+  ON public.progress FOR SELECT
+  USING (
+    user_id IN (
+      SELECT user1_id FROM public.friendships WHERE user2_id = auth.uid() AND status = 'accepted'
+      UNION
+      SELECT user2_id FROM public.friendships WHERE user1_id = auth.uid() AND status = 'accepted'
+    )
+  );
 
--- 4. Fix Progress and XP read policies to avoid recursion
-drop policy if exists "Users can read buddy progress" on public.progress;
-drop policy if exists "Users can read own progress" on public.progress;
-create policy "Anyone can read progress" on public.progress for select using (true);
+-- New XP Policy
+CREATE POLICY "Users can read friend xp"
+  ON public.xp FOR SELECT
+  USING (
+    user_id IN (
+      SELECT user1_id FROM public.friendships WHERE user2_id = auth.uid() AND status = 'accepted'
+      UNION
+      SELECT user2_id FROM public.friendships WHERE user1_id = auth.uid() AND status = 'accepted'
+    )
+  );
 
-drop policy if exists "Users can read buddy xp" on public.xp;
-drop policy if exists "Users can read own xp" on public.xp;
-create policy "Anyone can read xp" on public.xp for select using (true);
+-- New Messages Policy
+CREATE POLICY "Users can read messages with their friends"
+  ON public.messages FOR SELECT
+  USING (
+    (auth.uid() = sender_id AND receiver_id IN (
+      SELECT user1_id FROM public.friendships WHERE user2_id = auth.uid() AND status = 'accepted'
+      UNION
+      SELECT user2_id FROM public.friendships WHERE user1_id = auth.uid() AND status = 'accepted'
+    ))
+    OR
+    (auth.uid() = receiver_id AND sender_id IN (
+      SELECT user1_id FROM public.friendships WHERE user2_id = auth.uid() AND status = 'accepted'
+      UNION
+      SELECT user2_id FROM public.friendships WHERE user1_id = auth.uid() AND status = 'accepted'
+    ))
+  );
+
+-- 5. RPC FOR SENDING & ACCEPTING REQUESTS
+
+-- Send Request (user1_id is always the sender)
+CREATE OR REPLACE FUNCTION public.send_buddy_request(target_code text)
+RETURNS json as $$
+DECLARE
+  target_user uuid;
+  my_id uuid;
+  existing_status text;
+BEGIN
+  my_id := auth.uid();
+  IF my_id IS NULL THEN RETURN '{"success": false, "error": "Not authenticated"}'; END IF;
+
+  SELECT id INTO target_user FROM public.profiles WHERE buddy_code = target_code;
+  IF target_user IS NULL THEN RETURN '{"success": false, "error": "Buddy code not found."}'; END IF;
+  IF target_user = my_id THEN RETURN '{"success": false, "error": "You cannot add yourself."}'; END IF;
+
+  -- Check if relationship already exists
+  SELECT status INTO existing_status FROM public.friendships 
+  WHERE (user1_id = my_id AND user2_id = target_user) OR (user1_id = target_user AND user2_id = my_id);
+
+  IF existing_status = 'accepted' THEN 
+    RETURN '{"success": false, "error": "Already buddies!"}'; 
+  END IF;
+  
+  IF existing_status = 'pending' THEN 
+    RETURN '{"success": false, "error": "Request already pending."}'; 
+  END IF;
+
+  INSERT INTO public.friendships (user1_id, user2_id, status) VALUES (my_id, target_user, 'pending');
+  RETURN '{"success": true}';
+END;
+$$ language plpgsql security definer;
+
+-- Accept Request
+CREATE OR REPLACE FUNCTION public.accept_buddy_request(requester_id uuid)
+RETURNS json as $$
+DECLARE
+  my_id uuid;
+BEGIN
+  my_id := auth.uid();
+  IF my_id IS NULL THEN RETURN '{"success": false, "error": "Not authenticated"}'; END IF;
+
+  UPDATE public.friendships 
+  SET status = 'accepted' 
+  WHERE user1_id = requester_id AND user2_id = my_id AND status = 'pending';
+
+  RETURN '{"success": true}';
+END;
+$$ language plpgsql security definer;

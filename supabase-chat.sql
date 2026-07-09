@@ -24,12 +24,20 @@ create policy "Users can insert their own messages"
   on public.messages for insert
   with check (auth.uid() = sender_id);
 
-create policy "Users can read messages with their buddy"
+create policy "Users can read messages with their friends"
   on public.messages for select
   using (
-    (auth.uid() = sender_id and receiver_id = (select buddy_id from public.profiles where id = auth.uid()))
+    (auth.uid() = sender_id and receiver_id in (
+      select user1_id from public.friendships where user2_id = auth.uid() and status = 'accepted'
+      union
+      select user2_id from public.friendships where user1_id = auth.uid() and status = 'accepted'
+    ))
     or
-    (auth.uid() = receiver_id and sender_id = (select buddy_id from public.profiles where id = auth.uid()))
+    (auth.uid() = receiver_id and sender_id in (
+      select user1_id from public.friendships where user2_id = auth.uid() and status = 'accepted'
+      union
+      select user2_id from public.friendships where user1_id = auth.uid() and status = 'accepted'
+    ))
   );
 
 -- 3. Enable Realtime for messages

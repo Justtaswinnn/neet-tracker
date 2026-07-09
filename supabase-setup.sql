@@ -9,7 +9,6 @@ create table public.profiles (
   id uuid references auth.users on delete cascade primary key,
   display_name text not null default '',
   buddy_code text unique not null default substr(md5(random()::text), 1, 6),
-  buddy_id uuid references public.profiles(id) on delete set null,
   created_at timestamptz default now()
 );
 
@@ -30,17 +29,33 @@ create policy "Users can insert own profile"
   on public.profiles for insert
   with check (auth.uid() = id);
 
--- Users can read their buddy's profile
-create policy "Users can read buddy profile"
+-- Users can read profiles of people they have an accepted friendship with, OR pending requests
+create policy "Users can read friend profiles"
   on public.profiles for select
   using (
-    id = (select buddy_id from public.profiles where id = auth.uid())
+    id in (
+      select user1_id from public.friendships where user2_id = auth.uid()
+      union
+      select user2_id from public.friendships where user1_id = auth.uid()
+    )
   );
 
--- Anyone can look up a profile by buddy_code (for pairing)
-create policy "Anyone can lookup by buddy code"
-  on public.profiles for select
-  using (true);
+-- 1.5 FRIENDSHIPS TABLE
+create table public.friendships (
+  id uuid default gen_random_uuid() primary key,
+  user1_id uuid references public.profiles(id) on delete cascade,
+  user2_id uuid references public.profiles(id) on delete cascade,
+  status text check (status in ('pending', 'accepted')),
+  created_at timestamptz default now(),
+  unique(user1_id, user2_id)
+);
+
+alter table public.friendships enable row level security;
+
+-- Users can see friendships they are part of
+create policy "Users can read own friendships"
+  on public.friendships for select
+  using (auth.uid() = user1_id or auth.uid() = user2_id);
 
 -- 2. PROGRESS TABLE
 create table public.progress (
@@ -67,11 +82,15 @@ create policy "Users can update own progress"
   on public.progress for update
   using (auth.uid() = user_id);
 
--- Users can read their buddy's progress
-create policy "Users can read buddy progress"
+-- Users can read their friends progress
+create policy "Users can read friend progress"
   on public.progress for select
   using (
-    user_id = (select buddy_id from public.profiles where id = auth.uid())
+    user_id in (
+      select user1_id from public.friendships where user2_id = auth.uid() and status = 'accepted'
+      union
+      select user2_id from public.friendships where user1_id = auth.uid() and status = 'accepted'
+    )
   );
 
 -- 3. XP TABLE
@@ -94,11 +113,15 @@ create policy "Users can update own xp"
   on public.xp for update
   using (auth.uid() = user_id);
 
--- Users can read buddy's XP
-create policy "Users can read buddy xp"
+-- Users can read friends's XP
+create policy "Users can read friend xp"
   on public.xp for select
   using (
-    user_id = (select buddy_id from public.profiles where id = auth.uid())
+    user_id in (
+      select user1_id from public.friendships where user2_id = auth.uid() and status = 'accepted'
+      union
+      select user2_id from public.friendships where user1_id = auth.uid() and status = 'accepted'
+    )
   );
 
 -- 4. AUTO-CREATE PROFILE ON SIGNUP (trigger)
@@ -118,3 +141,54 @@ $$ language plpgsql security definer;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute procedure public.handle_new_user();
+
+-- 5. RPC FOR SENDING & ACCEPTING REQUESTS
+
+-- Send Request (user1_id is always the sender)
+create or replace function public.send_buddy_request(target_code text)
+returns json as $$
+declare
+  target_user uuid;
+  my_id uuid;
+  existing_status text;
+begin
+  my_id := auth.uid();
+  if my_id is null then return '{"success": false, "error": "Not authenticated"}'; end if;
+
+  select id into target_user from public.profiles where buddy_code = target_code;
+  if target_user is null then return '{"success": false, "error": "Buddy code not found."}'; end if;
+  if target_user = my_id then return '{"success": false, "error": "You cannot add yourself."}'; end if;
+
+  -- Check if relationship already exists
+  select status into existing_status from public.friendships 
+  where (user1_id = my_id and user2_id = target_user) or (user1_id = target_user and user2_id = my_id);
+
+  if existing_status = 'accepted' then 
+    return '{"success": false, "error": "Already buddies!"}'; 
+  end if;
+  
+  if existing_status = 'pending' then 
+    return '{"success": false, "error": "Request already pending."}'; 
+  end if;
+
+  insert into public.friendships (user1_id, user2_id, status) values (my_id, target_user, 'pending');
+  return '{"success": true}';
+end;
+$$ language plpgsql security definer;
+
+-- Accept Request
+create or replace function public.accept_buddy_request(requester_id uuid)
+returns json as $$
+declare
+  my_id uuid;
+begin
+  my_id := auth.uid();
+  if my_id is null then return '{"success": false, "error": "Not authenticated"}'; end if;
+
+  update public.friendships 
+  set status = 'accepted' 
+  where user1_id = requester_id and user2_id = my_id and status = 'pending';
+
+  return '{"success": true}';
+end;
+$$ language plpgsql security definer;
